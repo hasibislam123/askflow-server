@@ -1,3 +1,4 @@
 node_modules
 .env
 askflow-firebase-adminsdk.json
+.vercel

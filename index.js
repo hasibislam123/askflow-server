@@ -9,7 +9,7 @@ const stripe = require('stripe')(process.env.STRIPE_SECRET || '');
 const path = require('path');
 
 
-const serviceAccountPath = path.join(__dirname, process.env.FIREBASE_ADMIN_JSON || 'askflow-firebase-adminsdk.json');
+// const serviceAccountPath = path.join(__dirname, process.env.FIREBASE_ADMIN_JSON || 'askflow-firebase-adminsdk.json');
 
 try {
    const serviceAccount = require(serviceAccountPath);
@@ -22,6 +22,9 @@ try {
 
 const app = express();
 const port = process.env.PORT || 3000;
+
+const decoded = Buffer.from(process.env.FB_SERVICE_KEY, 'base64').toString('utf8')
+const serviceAccount = JSON.parse(decoded);
 
 // middleware
 app.use(cors());
@@ -556,8 +559,8 @@ async function run() {
    });
 
    // Ping DB
-   await client.db("admin").command({ ping: 1 });
-   console.log("Connected to MongoDB successfully");
+   // await client.db("admin").command({ ping: 1 });
+   // console.log("Connected to MongoDB successfully");
 }
 
 run().catch(err => {
