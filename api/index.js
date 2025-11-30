@@ -5,7 +5,6 @@ require('dotenv').config();
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 const stripe = require('stripe')(process.env.STRIPE_SECRET);
 
-const port = process.env.PORT || 3000
 const crypto = require("crypto");
 
 const admin = require("firebase-admin");
@@ -72,60 +71,78 @@ const client = new MongoClient(uri, {
     }
 });
 
+let db;
+let userCollection;
+let parcelsCollection;
+let paymentCollection;
+let ridersCollection;
+let trackingsCollection;
 
-async function run() {
+// Connect to MongoDB
+async function connectDB() {
+    if (db) return;
     try {
-        // Connect the client to the server	(optional starting in v4.7)
-        // In serverless environments, connection pooling is handled automatically
-        if (!client.topology || !client.topology.isConnected()) {
-            await client.connect();
-        }
+        await client.connect();
+        db = client.db('askflow_db');
+        userCollection = db.collection('users');
+        parcelsCollection = db.collection('parcels');
+        paymentCollection = db.collection('payments');
+        ridersCollection = db.collection('riders');
+        trackingsCollection = db.collection('trackings');
+        console.log('Connected to MongoDB');
+    } catch (error) {
+        console.error('MongoDB connection error:', error);
+    }
+}
 
-        const db = client.db('askflow_db');
-        const userCollection = db.collection('users');
-        const parcelsCollection = db.collection('parcels');
-        const paymentCollection = db.collection('payments');
-        const ridersCollection = db.collection('riders');
-        const trackingsCollection = db.collection('trackings');
+// Initialize connection
+connectDB();
 
-        // middle admin before allowing admin activity
-        // must be used after verifyFBToken middleware
-        const verifyAdmin = async (req, res, next) => {
-            const email = req.decoded_email;
-            const query = { email };
-            const user = await userCollection.findOne(query);
+// Middleware functions
 
-            if (!user || user.role !== 'admin') {
-                return res.status(403).send({ message: 'forbidden access' });
-            }
+const verifyAdmin = async (req, res, next) => {
+    await connectDB();
+    const email = req.decoded_email;
+    const query = { email };
+    const user = await userCollection.findOne(query);
 
-            next();
-        }
-        const verifyRider = async (req, res, next) => {
-            const email = req.decoded_email;
-            const query = { email };
-            const user = await userCollection.findOne(query);
+    if (!user || user.role !== 'admin') {
+        return res.status(403).send({ message: 'forbidden access' });
+    }
 
-            if (!user || user.role !== 'rider') {
-                return res.status(403).send({ message: 'forbidden access' });
-            }
+    next();
+}
 
-            next();
-        }
+const verifyRider = async (req, res, next) => {
+    await connectDB();
+    const email = req.decoded_email;
+    const query = { email };
+    const user = await userCollection.findOne(query);
 
-        const logTracking = async (trackingId, status) => {
-            const log = {
-                trackingId,
-                status,
-                details: status.split('_').join(' '),
-                createdAt: new Date()
-            }
-            const result = await trackingsCollection.insertOne(log);
-            return result;
-        }
+    if (!user || user.role !== 'rider') {
+        return res.status(403).send({ message: 'forbidden access' });
+    }
 
-        // users related apis
-        app.get('/users', verifyFBToken, async (req, res) => {
+    next();
+}
+
+const logTracking = async (trackingId, status) => {
+    await connectDB();
+    const log = {
+        trackingId,
+        status,
+        details: status.split('_').join(' '),
+        createdAt: new Date()
+    }
+    const result = await trackingsCollection.insertOne(log);
+    return result;
+}
+
+// Routes
+
+// users related apis
+app.get('/users', verifyFBToken, async (req, res) => {
+    await connectDB();
             const searchText = req.query.searchText;
             const query = {};
 
@@ -144,18 +161,20 @@ async function run() {
             res.send(result);
         });
 
-        app.get('/users/:id', async (req, res) => {
+app.get('/users/:id', async (req, res) => {
 
-        })
+})
 
-        app.get('/users/:email/role', async (req, res) => {
+app.get('/users/:email/role', async (req, res) => {
+    await connectDB();
             const email = req.params.email;
             const query = { email }
             const user = await userCollection.findOne(query);
             res.send({ role: user?.role || 'user' })
         })
 
-        app.post('/users', async (req, res) => {
+app.post('/users', async (req, res) => {
+    await connectDB();
             const user = req.body;
             user.role = 'user';
             user.createdAt = new Date();
@@ -170,7 +189,8 @@ async function run() {
             res.send(result);
         })
 
-        app.patch('/users/:id/role', verifyFBToken, verifyAdmin, async (req, res) => {
+app.patch('/users/:id/role', verifyFBToken, verifyAdmin, async (req, res) => {
+    await connectDB();
             const id = req.params.id;
             const roleInfo = req.body;
             const query = { _id: new ObjectId(id) }
@@ -183,8 +203,9 @@ async function run() {
             res.send(result);
         })
 
-        // parcel api
-        app.get('/parcels', async (req, res) => {
+// parcel api
+app.get('/parcels', async (req, res) => {
+    await connectDB();
             const query = {}
             const { email, deliveryStatus } = req.query;
 
@@ -204,7 +225,8 @@ async function run() {
             res.send(result);
         })
 
-        app.get('/parcels/rider', async (req, res) => {
+app.get('/parcels/rider', async (req, res) => {
+    await connectDB();
             const { riderEmail, deliveryStatus } = req.query;
             const query = {}
 
@@ -224,14 +246,16 @@ async function run() {
             res.send(result);
         })
 
-        app.get('/parcels/:id', async (req, res) => {
+app.get('/parcels/:id', async (req, res) => {
+    await connectDB();
             const id = req.params.id;
             const query = { _id: new ObjectId(id) }
             const result = await parcelsCollection.findOne(query);
             res.send(result);
         })
 
-        app.get('/parcels/delivery-status/stats', async (req, res) => {
+app.get('/parcels/delivery-status/stats', async (req, res) => {
+    await connectDB();
             const pipeline = [
                 {
                     $group: {
@@ -251,7 +275,8 @@ async function run() {
             res.send(result);
         })
 
-        app.post('/parcels', async (req, res) => {
+app.post('/parcels', async (req, res) => {
+    await connectDB();
             const parcel = req.body;
             const trackingId = generateTrackingId();
             // parcel created time
@@ -264,8 +289,9 @@ async function run() {
             res.send(result)
         })
 
-        // TODO: rename this to be specific like /parcels/:id/assign
-        app.patch('/parcels/:id', async (req, res) => {
+// TODO: rename this to be specific like /parcels/:id/assign
+app.patch('/parcels/:id', async (req, res) => {
+    await connectDB();
             const { riderId, riderName, riderEmail, trackingId } = req.body;
             const id = req.params.id;
             const query = { _id: new ObjectId(id) }
@@ -297,7 +323,8 @@ async function run() {
 
         })
 
-        app.patch('/parcels/:id/status', async (req, res) => {
+app.patch('/parcels/:id/status', async (req, res) => {
+    await connectDB();
             const { deliveryStatus, riderId, trackingId } = req.body;
 
             const query = { _id: new ObjectId(req.params.id) }
@@ -325,7 +352,8 @@ async function run() {
             res.send(result);
         })
 
-        app.delete('/parcels/:id', async (req, res) => {
+app.delete('/parcels/:id', async (req, res) => {
+    await connectDB();
             const id = req.params.id;
             const query = { _id: new ObjectId(id) }
 
@@ -334,8 +362,9 @@ async function run() {
         })
 
 
-        // payment related apis
-        app.post('/payment-checkout-session', async (req, res) => {
+// payment related apis
+app.post('/payment-checkout-session', async (req, res) => {
+    await connectDB();
             const parcelInfo = req.body;
             const amount = parseInt(parcelInfo.cost) * 100;
             const session = await stripe.checkout.sessions.create({
@@ -365,39 +394,8 @@ async function run() {
         })
 
 
-        // old
-        // app.post('/create-checkout-session', async (req, res) => {
-        //     const paymentInfo = req.body;
-        //     const amount = parseInt(paymentInfo.cost) * 100;
-
-        //     const session = await stripe.checkout.sessions.create({
-        //         line_items: [
-        //             {
-        //                 price_data: {
-        //                     currency: 'USD',
-        //                     unit_amount: amount,
-        //                     product_data: {
-        //                         name: paymentInfo.parcelName
-        //                     }
-        //                 },
-        //                 quantity: 1,
-        //             },
-        //         ],
-        //         customer_email: paymentInfo.senderEmail,
-        //         mode: 'payment',
-        //         metadata: {
-        //             parcelId: paymentInfo.parcelId,
-        //             parcelName: paymentInfo.parcelName
-        //         },
-        //         success_url: `${process.env.SITE_DOMAIN}/dashboard/payment-success`,
-        //         cancel_url: `${process.env.SITE_DOMAIN}/dashboard/payment-cancelled`,
-        //     })
-
-        //     console.log(session)
-        //     res.send({ url: session.url })
-        // })
-
-        app.patch('/payment-success', async (req, res) => {
+app.patch('/payment-success', async (req, res) => {
+    await connectDB();
             const sessionId = req.query.session_id;
             const session = await stripe.checkout.sessions.retrieve(sessionId);
 
@@ -458,8 +456,9 @@ async function run() {
             return res.send({ success: false })
         })
 
-        // payment related apis
-        app.get('/payments', verifyFBToken, async (req, res) => {
+// payment related apis
+app.get('/payments', verifyFBToken, async (req, res) => {
+    await connectDB();
             const email = req.query.email;
             const query = {}
 
@@ -478,8 +477,9 @@ async function run() {
             res.send(result);
         })
 
-        // riders related apis
-        app.get('/riders', async (req, res) => {
+// riders related apis
+app.get('/riders', async (req, res) => {
+    await connectDB();
             const { status, district, workStatus } = req.query;
             const query = {}
 
@@ -498,7 +498,8 @@ async function run() {
             res.send(result);
         })
 
-        app.get('/riders/delivery-per-day', async (req, res) => {
+app.get('/riders/delivery-per-day', async (req, res) => {
+    await connectDB();
             const email = req.query.email;
             // aggregate on parcel
             const pipeline = [
@@ -548,7 +549,8 @@ async function run() {
             res.send(result);
         })
 
-        app.post('/riders', async (req, res) => {
+app.post('/riders', async (req, res) => {
+    await connectDB();
             const rider = req.body;
             rider.status = 'pending';
             rider.createdAt = new Date();
@@ -557,7 +559,8 @@ async function run() {
             res.send(result);
         })
 
-        app.patch('/riders/:id', verifyFBToken, verifyAdmin, async (req, res) => {
+app.patch('/riders/:id', verifyFBToken, verifyAdmin, async (req, res) => {
+    await connectDB();
             const status = req.body.status;
             const id = req.params.id;
             const query = { _id: new ObjectId(id) }
@@ -584,33 +587,18 @@ async function run() {
             res.send(result);
         })
 
-        // tracking related apis
-        app.get('/trackings/:trackingId/logs', async (req, res) => {
+// tracking related apis
+app.get('/trackings/:trackingId/logs', async (req, res) => {
+    await connectDB();
             const trackingId = req.params.trackingId;
             const query = { trackingId };
             const result = await trackingsCollection.find(query).toArray();
             res.send(result);
-        })
-
-        // Send a ping to confirm a successful connection
-        // await client.db("admin").command({ ping: 1 });
-        // console.log("Pinged your deployment. You successfully connected to MongoDB!");
-    } finally {
-        // Ensures that the client will close when you finish/error
-        // await client.close();
-    }
-}
-run().catch(console.dir);
+})
 
 app.get('/', (req, res) => {
     res.send('zap is shifting shifting!')
 })
-
-if (process.env.NODE_ENV !== 'production') {
-    app.listen(port, () => {
-        console.log(`Example app listening on port ${port}`)
-    })
-}
 
 // Export for Vercel serverless
 module.exports = app;
