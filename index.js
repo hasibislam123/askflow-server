@@ -9,17 +9,6 @@ const stripe = require('stripe')(process.env.STRIPE_SECRET || '');
 const path = require('path');
 
 
-// const serviceAccountPath = path.join(__dirname, process.env.FIREBASE_ADMIN_JSON || 'askflow-firebase-adminsdk.json');
-
-try {
-   const serviceAccount = require(serviceAccountPath);
-   admin.initializeApp({
-      credential: admin.credential.cert(serviceAccount)
-   });
-} catch (err) {
-   console.warn('Firebase admin init failed — check FIREBASE_ADMIN_JSON path and file. Continuing without Firebase for now.', err.message);
-}
-
 const app = express();
 const port = process.env.PORT || 3000;
 
