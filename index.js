@@ -8,6 +8,7 @@ const admin = require('firebase-admin');
 const stripe = require('stripe')(process.env.STRIPE_SECRET || '');
 const path = require('path');
 
+
 const serviceAccountPath = path.join(__dirname, process.env.FIREBASE_ADMIN_JSON || 'askflow-firebase-adminsdk.json');
 
 try {
@@ -64,7 +65,7 @@ const verifyFirebaseToken = asyncHandler(async (req, res, next) => {
    try {
       const decoded = await admin.auth().verifyIdToken(idToken);
       req.decoded_email = decoded.email;
-      req.decoded_user = decoded; // optional: useful info
+      req.decoded_user = decoded;
       next();
    } catch (err) {
       console.error('verifyFirebaseToken error:', err.message);
@@ -89,10 +90,8 @@ async function run() {
    const parcelsCollection = db.collection('parcels');
    const paymentCollection = db.collection('payments');
    const ridersCollection = db.collection('riders');
-   // নতুন ট্র্যাকিং কালেকশন যোগ করা হলো
    const trackingsCollection = db.collection('trackings');
 
-   // ট্র্যাকিং লগ তৈরি করার ফাংশন
    const logTracking = async (trackingId, status) => {
       const log = {
          trackingId,
@@ -112,6 +111,19 @@ async function run() {
       }
       const user = await userCollection.findOne({ email });
       if (!user || user.role !== 'admin') {
+         return res.status(403).json({ message: 'Forbidden access' });
+      }
+      next();
+   });
+   // ===== verifyRider middleware (uses DB) =====
+
+   const verifyRider = asyncHandler(async (req, res, next) => {
+      const email = req.decoded_email;
+      if (!email) {
+         return res.status(401).json({ message: 'Unauthorized: missing decoded email' });
+      }
+      const user = await userCollection.findOne({ email });
+      if (!user || user.role !== 'rider') {
          return res.status(403).json({ message: 'Forbidden access' });
       }
       next();
@@ -220,6 +232,24 @@ async function run() {
       const result = await parcelsCollection.findOne(query);
       res.send(result);
    })
+   app.get('/parcels/delivery-status/stats', async (req, res) => {
+      const pipeline = [
+         {
+            $group: {
+               _id: '$delivery-status',
+               count: { $sum: 1 }
+            }
+         }, 
+         {
+            $project: {
+               status: '$_id',
+               count: 1
+            }
+         }
+      ]
+      const result = await parcelsCollection.aggregate(pipeline).toArray()
+      res.send(result);
+   })
 
    app.post('/parcels', async (req, res) => {
       const parcel = req.body;
@@ -309,7 +339,6 @@ async function run() {
          return res.status(400).json({ message: 'Missing paymentInfo fields' });
       }
 
-      // পার্সেল থেকে ট্র্যাকিং আইডি তুলে আনা হলো, যা পেমেন্ট এর পরে লাগবে
       let trackingId = '';
       if (isValidObjectId(paymentInfo.parcelId)) {
          const parcel = await parcelsCollection.findOne({ _id: new ObjectId(paymentInfo.parcelId) });
@@ -334,7 +363,6 @@ async function run() {
          metadata: {
             parcelId: paymentInfo.parcelId,
             parcelName: paymentInfo.parcelName || '',
-            // ট্র্যাকিং আইডি মেটাডাটায় যোগ করা হলো
             trackingId: trackingId
          },
          customer_email: paymentInfo.senderEmail,
@@ -345,7 +373,7 @@ async function run() {
       res.json({ url: session.url });
    }));
 
-   // compatibility route (old) - আপডেট করা হয়নি, কেননা নতুন রুটটি ব্যবহার করা হচ্ছে।
+   // compatibility route (old)
 
    app.patch('/payment-success', asyncHandler(async (req, res) => {
       const sessionId = req.query.session_id;
@@ -430,6 +458,20 @@ async function run() {
       res.json(result);
    }));
 
+   app.get('/riders/delivery-per-day', async ( req , res)=>{
+      const email = req.query.email;
+      const pipeline = [
+         {
+            $match:{
+               riderEmail: email,
+               deliveryStatus: 'parcel_delivered'
+            }
+         }
+      ]
+      const result  = await parcelsCollection.aggregate(pipeline).toArray();
+      res.send(result);
+   })
+
    app.post('/riders', asyncHandler(async (req, res) => {
       const rider = req.body;
       if (!rider || !rider.email) return res.status(400).json({ message: 'Rider data with email required' });
@@ -456,22 +498,22 @@ async function run() {
       res.json(result);
    }));
 
-   // ====== TRACKING ROUTES (নতুন যোগ করা) ======
+   // TRACKING ROUTES 
    app.get('/trackings/:trackingId/logs', asyncHandler(async (req, res) => {
       const trackingId = req.params.trackingId;
       if (!trackingId) return res.status(400).json({ message: 'Tracking ID is required' });
 
       const query = { trackingId };
-      // সময় অনুযায়ী সাজানো
+
       const result = await trackingsCollection.find(query).sort({ createdAt: 1 }).toArray();
       res.json(result);
    }));
 
 
-   // ====== Basic ping & readiness ======
+   //  Basic ping & readiness
    app.get('/', (req, res) => res.send('askFlow — Hello World!'));
 
-   // ====== Global error handler ======
+   //  Global error handler 
    app.use((err, req, res, next) => {
       console.error('Unhandled error:', err);
       res.status(err.status || 500).json({ message: err.message || 'Internal server error' });
